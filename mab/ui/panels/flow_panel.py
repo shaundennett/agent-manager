@@ -2,8 +2,9 @@
 ui/panels/flow_panel.py
 ───────────────────────
 Panel 3 — Flow Visualiser Panel.
-Wraps the FlowCanvas and adds a refresh control + legend.
+Wraps the FlowCanvas (Mermaid-based) and adds a refresh control.
 Auto-refreshes when the project changes.
+Writes flow.mmd to the project root on every refresh.
 """
 
 from __future__ import annotations
@@ -40,10 +41,18 @@ class FlowPanel(ctk.CTkFrame):
 
         ctk.CTkLabel(
             header,
-            text="Agent Flow Visualiser",
+            text="Agent Flow — Mermaid",
             font=ctk.CTkFont(size=14, weight="bold"),
             anchor="w",
         ).grid(row=0, column=0, padx=16, pady=10, sticky="w")
+
+        ctk.CTkLabel(
+            header,
+            text="Renders flowchart TD  ·  flow.mmd saved to project root",
+            font=ctk.CTkFont(size=11),
+            text_color="#57606a",
+            anchor="w",
+        ).grid(row=0, column=1, padx=4, pady=10, sticky="w")
 
         ctk.CTkButton(
             header, text="⟳ Refresh", width=90, height=28,
@@ -52,29 +61,8 @@ class FlowPanel(ctk.CTkFrame):
             command=self.refresh,
         ).grid(row=0, column=2, padx=8, pady=8)
 
-        # Legend panel
-        legend = ctk.CTkFrame(header, fg_color="transparent")
-        legend.grid(row=0, column=1, padx=4, sticky="e")
-
-        legend_items = [
-            ("#3b82d4", "Orchestrator"),
-            ("#6b7280", "Worker"),
-            ("#7c5cd8", "Specialist"),
-            ("#22c55e", "Gateway"),
-        ]
-        for col, (colour, label) in enumerate(legend_items):
-            dot = ctk.CTkLabel(
-                legend, text="●", font=ctk.CTkFont(size=16),
-                text_color=colour, width=18,
-            )
-            dot.grid(row=0, column=col * 2, padx=(8, 0))
-            ctk.CTkLabel(
-                legend, text=label, font=ctk.CTkFont(size=11),
-                text_color="#57606a",
-            ).grid(row=0, column=col * 2 + 1, padx=(2, 4))
-
         # Canvas
-        self._canvas = FlowCanvas(self, fg_color="#ffffff")
+        self._canvas = FlowCanvas(self, fg_color="#1e1e2e")
         self._canvas.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -89,7 +77,7 @@ class FlowPanel(ctk.CTkFrame):
         try:
             from core.flow_analyser import build_graph
             graph = build_graph(self._project_root)
-            self._canvas.render(graph)
+            self._canvas.render(graph, project_root=self._project_root)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Flow refresh error: %s", exc)
             self._canvas.clear()

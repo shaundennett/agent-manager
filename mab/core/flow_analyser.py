@@ -3,6 +3,9 @@ core/flow_analyser.py
 ─────────────────────
 Reads all agent.md files in a project and builds a NetworkX directed graph
 suitable for rendering in the flow visualiser panel.
+
+Also provides generate_mermaid() to serialise a FlowGraph to a Mermaid
+flowchart string and save it as a .mmd file in the project root.
 """
 
 from __future__ import annotations
@@ -183,3 +186,75 @@ def _build_from_agent_data(agent_data_list) -> FlowGraph:  # type: ignore[no-unt
         graph.raw_graph = G
 
     return graph
+
+
+# ── Mermaid export ────────────────────────────────────────────────────────────
+
+# Map agent type → Mermaid node shape syntax
+_MERMAID_SHAPE: dict[str, tuple[str, str]] = {
+    "orchestrator": ("([", "])"),   # stadium / rounded
+    "worker":       ("[",  "]"),    # rectangle
+    "specialist":   ("{",  "}"),    # diamond
+    "gateway":      ("{{", "}}"),   # hexagon
+    "hybrid":       ("(",  ")"),    # rounded rect
+}
+_DEFAULT_SHAPE = ("[", "]")
+
+# Map protocol → Mermaid link style
+_MERMAID_LINK: dict[str, str] = {
+    "direct-call":   "-->",
+    "message-queue": "-.->",
+    "rest":          "==>",
+    "grpc":          "-->>",
+    "event-bus":     "-.->>",
+}
+_DEFAULT_LINK = "-->"
+
+
+def generate_mermaid(graph: "FlowGraph", output_path: Path | None = None) -> str:
+    """Convert a FlowGraph to a Mermaid flowchart string.
+
+    If *output_path* is provided the diagram is also written to that file.
+    Returns the raw Mermaid source so the UI can display it directly.
+    """
+    lines: list[str] = ["flowchart TD"]
+
+    # Class definitions (one per agent type used)
+    used_types = {n.agent_type for n in graph.nodes}
+    for atype in sorted(used_types):
+        colour = NODE_COLOURS.get(atype, "#6b7280")
+        lines.append(f"    classDef {atype} fill:{colour},color:#fff,stroke:#1f2328,stroke-width:1px")
+
+    lines.append("")
+
+    # Node declarations
+    for node in graph.nodes:
+        atype = node.agent_type.lower()
+        open_b, close_b = _MERMAID_SHAPE.get(atype, _DEFAULT_SHAPE)
+        label_parts = [node.name]
+        if node.role and "TODO" not in node.role:
+            label_parts.append(node.role)
+        label = "<br/>".join(label_parts)
+        safe_id = node.name.replace(" ", "_").replace("-", "_")
+        lines.append(f'    {safe_id}{open_b}"{label}"{close_b}')
+        lines.append(f'    class {safe_id} {atype}')
+
+    lines.append("")
+
+    # Edge declarations
+    for edge in graph.edges:
+        link = _MERMAID_LINK.get(edge.protocol, _DEFAULT_LINK)
+        src = edge.source.replace(" ", "_").replace("-", "_")
+        tgt = edge.target.replace(" ", "_").replace("-", "_")
+        label = edge.protocol.replace("-", " ")
+        lines.append(f'    {src} {link}|"{label}"| {tgt}')
+
+    mermaid_src = "\n".join(lines) + "\n"
+
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(mermaid_src, encoding="utf-8")
+        logger.info("Mermaid diagram written to %s", output_path)
+
+    return mermaid_src
