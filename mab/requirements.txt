@@ -1,0 +1,11 @@
+customtkinter==5.2.2
+openai==1.109.1
+anthropic==0.28.0
+ibm-watsonx-ai==1.7.2
+networkx==3.3
+matplotlib==3.9.0
+pyvis==0.3.2
+python-dotenv==1.0.1
+pyyaml==6.0.1
+Pillow==10.3.0
+requests==2.32.3
