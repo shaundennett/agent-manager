@@ -6,7 +6,7 @@
 **Version:** 1.0.0
 **Type:** Developer Tooling Agent
 **Runtime:** Python 3.11+
-**Interface:** Desktop GUI (Tkinter + CustomTkinter) or Web UI (Streamlit)
+**Interface:** Desktop GUI (Tkinter + CustomTkinter)
 
 Multi-Agent Builder is an AI-assisted developer tool that simplifies, accelerates, and manages the
 creation of multi-agent application architectures. It provides a guided, visual workflow from an
@@ -307,47 +307,52 @@ When the user clicks ✨ on a field:
 
 ### Responsibility
 
-Render a live, read-only directed graph of the entire multi-agent system, derived purely from the
-information already captured in the `agent.md` files. The graph auto-updates whenever an agent
-definition is saved.
+Generate and display a Mermaid `flowchart TD` diagram of the entire multi-agent system, derived
+from the `communicates_with`, `communication_protocol`, and `handoff_conditions` fields in every
+`agent.md` file. The diagram auto-updates on refresh and is always saved to `flow.mmd` in the
+project root.
 
 ### Graph Construction (`flow_analyser.py`)
 
 1. Load all `agent.md` files from the current project's `agents/` directory
 2. For each agent, extract:
    - Node: `name`, `role`, `type`, `trigger`, `completion_pct`
-   - Edges: `communicates_with` → directed edges with `handoff_conditions` as edge labels
-3. Build a `networkx.DiGraph` (or equivalent) in memory
-4. Classify node shapes by `position_hint`:
-   - `orchestrator` → rounded rectangle (blue)
-   - `worker` → rectangle (grey)
-   - `specialist` → diamond (purple)
-   - `gateway` → hexagon (green — entry/exit points)
-5. Colour edges by communication protocol type
+   - Edges: `communicates_with` → directed edges labelled with the communication protocol
+3. Build a `FlowGraph` dataclass (nodes + edges) in memory; also constructs a `networkx.DiGraph`
+   when `networkx` is available (used for graph analytics, not rendering)
+4. Call `generate_mermaid(graph, output_path)` to produce a `flowchart TD` string and write
+   `flow.mmd` to the project root
 
-### Rendering
+### Rendering (`flow_canvas.py`)
 
-- **Library:** `matplotlib` + `networkx` (embedded in Tkinter canvas) **or** `pyvis` / `streamlit-agraph` (for Streamlit variant)
-- **Layout algorithm:** Hierarchical (top-down) using `graphviz` `dot` layout, falling back to `spring_layout`
-- Node tooltip on hover: name, role, trigger, completion %
-- Edge tooltip on hover: protocol, handoff conditions
-- Controls: zoom in/out, pan, reset, PNG export, toggle edge labels
+- Displays the raw Mermaid source in a dark-themed, scrollable, read-only code view inside the
+  Tkinter UI (no browser or extra rendering dependencies required)
+- Toolbar buttons:
+  - **⧉ Copy** — copy Mermaid source to clipboard
+  - **💾 Save .mmd** — save to a user-chosen path
+  - **🌐 Save .html** — export a standalone HTML page that renders the diagram via the Mermaid CDN
+    (`mermaid@10`) — open in any browser for the fully rendered visual
+- `flow.mmd` is also written automatically to the project root on every refresh
 
-### Visual Legend
+### Mermaid Node Shapes by Agent Type
 
-```
-  ╔══════════╗   Orchestrator     ──────▶  Direct call
-  ║          ║
-  ╚══════════╝
+| Agent type | Mermaid syntax | Shape |
+|------------|---------------|-------|
+| `orchestrator` | `([…])` | Stadium / rounded pill |
+| `worker` | `[…]` | Rectangle |
+| `specialist` | `{…}` | Diamond |
+| `gateway` | `{{…}}` | Hexagon |
+| `hybrid` | `(…)` | Rounded rectangle |
 
-  ┌──────────┐   Worker          - - - -▶  Message queue
-  │          │
-  └──────────┘
+### Mermaid Edge Styles by Protocol
 
-  ◇──────────◇   Specialist      ════════▶  Event bus
-  
-  ⬡──────────⬡   Gateway
-```
+| Protocol | Mermaid link | Style |
+|----------|-------------|-------|
+| `direct-call` | `-->` | Solid arrow |
+| `message-queue` | `-.->` | Dashed arrow |
+| `rest` | `==>` | Thick arrow |
+| `grpc` | `-->>` | Open arrowhead |
+| `event-bus` | `-.->>` | Dotted open arrow |
 
 ---
 
@@ -498,18 +503,21 @@ definition is saved.
 ## Dependencies
 
 ```
-# requirements.txt
-customtkinter>=5.2.2         # Modern Tkinter UI widgets
-openai>=1.30.0               # OpenAI API client
-anthropic>=0.25.0            # Anthropic Claude client
-ibm-watsonx-ai>=1.0.10       # IBM watsonx.ai client
-networkx>=3.3                # Graph construction
-matplotlib>=3.9.0            # Graph rendering (embedded canvas)
-pyvis>=0.3.2                 # Interactive HTML graph export
-python-dotenv>=1.0.1         # Environment variable management
-pyyaml>=6.0.1                # YAML config handling
-Pillow>=10.3.0               # Image handling for canvas export
+# requirements.txt (pinned versions)
+customtkinter==5.2.2         # Modern Tkinter UI widgets
+openai==1.109.1              # OpenAI API client (also used for Ollama compatibility)
+anthropic==0.28.0            # Anthropic Claude client
+ibm-watsonx-ai==1.7.2        # IBM watsonx.ai client
+networkx==3.3                # Graph analytics (optional — not required for rendering)
+matplotlib==3.9.0            # Available but no longer used by the flow panel
+python-dotenv==1.0.1         # Environment variable management
+pyyaml==6.0.1                # YAML config handling
+requests==2.32.3             # HTTP utilities
 ```
+
+> **Note:** `matplotlib`, `networkx`, and `Pillow` are retained in `requirements.txt` for
+> potential future use but are **not required** by the Mermaid-based flow panel. The flow
+> visualiser has no rendering dependencies beyond the Python standard library and `customtkinter`.
 
 ---
 
@@ -564,9 +572,9 @@ MAB_LOG_LEVEL=INFO
 
 | Phase | Feature | Priority |
 |-------|---------|----------|
-| v1.0 | AI prompt → scaffold, proforma editor, static flow graph | P0 |
+| v1.0 | AI prompt → scaffold, proforma editor, Mermaid flow diagram | P0 |
 | v1.1 | Per-field AI assist, agent completion tracking | P0 |
-| v1.2 | Interactive flow graph (click-to-edit from graph) | P1 |
+| v1.2 | Rendered Mermaid preview embedded in UI (via embedded browser) | P1 |
 | v1.3 | Export to LangGraph / AutoGen / CrewAI boilerplate code | P1 |
 | v2.0 | Collaborative multi-user editing, Git integration | P2 |
 | v2.1 | Agent simulation / dry-run mode | P2 |
@@ -580,6 +588,7 @@ MAB_LOG_LEVEL=INFO
 - [ ] All 10 proforma sections are accessible in the editor for any selected agent
 - [ ] AI-assist suggestions are contextually relevant and can be accepted/rejected per field
 - [ ] Completion percentage updates in real time as fields are filled
-- [ ] Flow visualiser renders a directed graph with correct edges within 2 seconds of saving an agent
+- [ ] Flow visualiser generates a valid Mermaid `flowchart TD` diagram and writes `flow.mmd` to the project root on every refresh
+- [ ] Standalone HTML export opens in a browser and renders the Mermaid diagram correctly
 - [ ] All API keys are sourced from environment variables and never persisted to disk by the application
 - [ ] Application runs on Windows 10+, macOS 12+, and Ubuntu 22.04+ with Python 3.11+
