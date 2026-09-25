@@ -53,6 +53,15 @@ FIELD_ASSIST_SYSTEM = (
     "— no JSON wrapper, no markdown fences, no explanation."
 )
 
+RULES_SYSTEM = (
+    "You are an expert software engineering lead. "
+    "Generate a concise, structured BOB.md / CLAUDE.md style rules file for the "
+    "project described by the user. "
+    "The file must cover: coding standards, security requirements, testing requirements, "
+    "architecture principles, and any domain-specific constraints implied by the description. "
+    "Return ONLY plain markdown — no prose introduction, no code fences wrapping the whole output."
+)
+
 
 class AIClient:
     """Unified LLM client. Provider is resolved at construction time."""
@@ -117,6 +126,18 @@ class AIClient:
         )
         raw = self._chat(SYSTEM_ARCHITECT_PROMPT, user_prompt, retries=2)
         return self._parse_json(raw)
+
+    def generate_project_rules(self, project_description: str) -> str:
+        """
+        Ask the LLM to produce a BOB.md-style rules file for the project.
+        Returns the raw markdown string.
+        """
+        user_prompt = (
+            f"Project description:\n\n{project_description}\n\n"
+            "Write a complete BOB.md rules file for this project. "
+            "Be specific and actionable. Use markdown headings and bullet lists."
+        )
+        return self._chat(RULES_SYSTEM, user_prompt, retries=1).strip()
 
     def assist_field(
         self,

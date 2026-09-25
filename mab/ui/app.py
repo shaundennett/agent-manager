@@ -203,6 +203,7 @@ class MABApp(ctk.CTk):
         self._switch_tab("✏️  Editor")
 
     def _go_to_prompt(self) -> None:
+        self._prompt_panel.reset_to_new()
         self._switch_tab("✨  Prompt")
 
     def _show_about(self) -> None:

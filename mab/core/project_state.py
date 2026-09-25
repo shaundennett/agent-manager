@@ -10,14 +10,15 @@ is reopened.
 Schema
 ──────
 {
-  "project_name":   "my_project",
+  "project_name":    "my_project",
   "project_summary": "One-paragraph summary from the LLM",
-  "description":    "The original free-text application brief",
-  "output_dir":     "/path/to/projects",
-  "llm_provider":   "openai",
-  "llm_model":      "gpt-4o",
-  "created_at":     "2025-01-01T12:00:00",
-  "agents":         [ ... full LLM agent list ... ]
+  "description":     "The original free-text application brief",
+  "output_dir":      "/path/to/projects",
+  "llm_provider":    "openai",
+  "llm_model":       "gpt-4o",
+  "project_rules":   "Full text of the BOB.md rules (also written to BOB.md on disk)",
+  "created_at":      "2025-01-01T12:00:00",
+  "agents":          [ ... full LLM agent list ... ]
 }
 """
 

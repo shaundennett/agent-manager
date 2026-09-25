@@ -9,6 +9,8 @@ State persistence
 ─────────────────
 On project creation all prompt-page values are written to mab_project.json
 in the project root.  Call load_state(project_root) to restore them.
+The Project Rules field is also written to / read from BOB.md in the
+project root so it is available to every tool that consults that file.
 """
 
 from __future__ import annotations
@@ -26,6 +28,14 @@ import customtkinter as ctk
 
 logger = logging.getLogger(__name__)
 
+_BOB_MD_FILENAME = "BOB.md"
+
+_RULES_PLACEHOLDER = (
+    "Enter rules and conditions that apply to all components — "
+    "coding standards, security requirements, testing policy, architecture principles, etc.\n\n"
+    "You can type freely here or use ✨ Generate Rules to have the LLM draft this for you."
+)
+
 
 class PromptPanel(ctk.CTkFrame):
     """Full-screen AI prompt entry and scaffold confirmation screen."""
@@ -42,6 +52,8 @@ class PromptPanel(ctk.CTkFrame):
         self.on_project_created = on_project_created
         self._proposed_agents: list[dict] = []
         self._agent_check_vars: dict[str, ctk.BooleanVar] = {}
+        # Set when an existing project is loaded; None when creating a new one.
+        self._project_root: Path | None = None
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -52,10 +64,9 @@ class PromptPanel(ctk.CTkFrame):
 
     def _build_prompt_screen(self) -> None:
         """Initial input screen."""
-        self._screen = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self._screen = ctk.CTkScrollableFrame(self, corner_radius=0, fg_color="transparent")
         self._screen.grid(row=0, column=0, sticky="nsew")
         self._screen.grid_columnconfigure(0, weight=1)
-        self._screen.grid_rowconfigure(3, weight=1)
 
         # Title
         ctk.CTkLabel(
@@ -84,13 +95,13 @@ class PromptPanel(ctk.CTkFrame):
         self._project_name_entry = ctk.CTkEntry(
             card, placeholder_text="e.g. customer_support_system", height=32
         )
-        self._project_name_entry.grid(row=0, column=1, padx=(0, 16), pady=(16, 4), sticky="ew")
+        self._project_name_entry.grid(row=0, column=1, columnspan=2, padx=(0, 16), pady=(16, 4), sticky="ew")
 
         # Output directory
         ctk.CTkLabel(card, text="Output Directory *", anchor="w",
                       font=ctk.CTkFont(size=13)).grid(row=1, column=0, padx=16, pady=4, sticky="w")
         dir_frame = ctk.CTkFrame(card, fg_color="transparent")
-        dir_frame.grid(row=1, column=1, padx=(0, 16), pady=4, sticky="ew")
+        dir_frame.grid(row=1, column=1, columnspan=2, padx=(0, 16), pady=4, sticky="ew")
         dir_frame.grid_columnconfigure(0, weight=1)
 
         self._output_dir_entry = ctk.CTkEntry(dir_frame, placeholder_text="./projects", height=32)
@@ -109,13 +120,13 @@ class PromptPanel(ctk.CTkFrame):
         ctk.CTkOptionMenu(
             card, variable=self._provider_var, values=self.LLM_PROVIDERS, height=32,
             command=self._on_provider_changed,
-        ).grid(row=2, column=1, padx=(0, 16), pady=4, sticky="w")
+        ).grid(row=2, column=1, columnspan=2, padx=(0, 16), pady=4, sticky="w")
 
         # Model name (dynamic for Ollama, editable for all)
         ctk.CTkLabel(card, text="Model", anchor="w",
                       font=ctk.CTkFont(size=13)).grid(row=3, column=0, padx=16, pady=4, sticky="w")
         model_frame = ctk.CTkFrame(card, fg_color="transparent")
-        model_frame.grid(row=3, column=1, padx=(0, 16), pady=4, sticky="ew")
+        model_frame.grid(row=3, column=1, columnspan=2, padx=(0, 16), pady=4, sticky="ew")
         model_frame.grid_columnconfigure(0, weight=1)
 
         default_model = os.environ.get("MAB_LLM_MODEL", "gpt-4o")
@@ -138,7 +149,7 @@ class PromptPanel(ctk.CTkFrame):
         self._description_box = ctk.CTkTextbox(
             card, height=160, wrap="word", font=ctk.CTkFont(size=13)
         )
-        self._description_box.grid(row=4, column=1, padx=(0, 16), pady=4, sticky="ew")
+        self._description_box.grid(row=4, column=1, columnspan=2, padx=(0, 16), pady=4, sticky="ew")
         self._description_box.insert(
             "1.0",
             "Describe the application you want to build. For example:\n\n"
@@ -148,7 +159,56 @@ class PromptPanel(ctk.CTkFrame):
         )
         self._description_box.bind("<FocusIn>", self._clear_placeholder)
 
-        # Generate button
+        # ── Project Rules (BOB.md) ────────────────────────────────────────────
+        ctk.CTkFrame(card, height=1, fg_color="#e5e7eb").grid(
+            row=5, column=0, columnspan=3, padx=16, pady=(12, 8), sticky="ew"
+        )
+
+        rules_header = ctk.CTkFrame(card, fg_color="transparent")
+        rules_header.grid(row=6, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="ew")
+        rules_header.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            rules_header,
+            text="Project Rules (BOB.md)",
+            anchor="w",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#1f2328",
+        ).grid(row=0, column=0, sticky="w")
+
+        ctk.CTkLabel(
+            rules_header,
+            text="Rules and conditions that apply to all components — written to BOB.md in the project root.",
+            anchor="w",
+            font=ctk.CTkFont(size=11),
+            text_color="#57606a",
+        ).grid(row=0, column=1, padx=(10, 0), sticky="w")
+
+        ctk.CTkButton(
+            rules_header,
+            text="✨ Generate Rules",
+            width=130, height=28,
+            fg_color="transparent",
+            border_width=1,
+            border_color="#c4b5fd",
+            hover_color="#ede9fe",
+            text_color="#7c5cd8",
+            font=ctk.CTkFont(size=12),
+            command=self._open_generate_rules_dialog,
+        ).grid(row=0, column=2, padx=(8, 0))
+
+        self._rules_box = ctk.CTkTextbox(
+            card, height=200, wrap="word", font=ctk.CTkFont(size=12)
+        )
+        self._rules_box.grid(row=7, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="ew")
+        self._rules_box.insert("1.0", _RULES_PLACEHOLDER)
+        self._rules_box.bind("<FocusIn>", self._clear_rules_placeholder)
+
+        # ── Generate button ───────────────────────────────────────────────────
+        ctk.CTkFrame(card, height=1, fg_color="#e5e7eb").grid(
+            row=8, column=0, columnspan=3, padx=16, pady=(8, 0), sticky="ew"
+        )
+
         self._generate_btn = ctk.CTkButton(
             card,
             text="✨  Generate Agent Architecture",
@@ -159,8 +219,10 @@ class PromptPanel(ctk.CTkFrame):
             command=self._on_generate,
         )
         self._generate_btn.grid(
-            row=5, column=0, columnspan=2, padx=16, pady=(12, 16), sticky="ew"
+            row=9, column=0, columnspan=3, padx=16, pady=(12, 16), sticky="ew"
         )
+        # Keep a reference to the card so mode-switching can reach the button's parent
+        self._form_card = card
 
         # Status
         self._status_var = ctk.StringVar(value="")
@@ -168,6 +230,200 @@ class PromptPanel(ctk.CTkFrame):
             self._screen, textvariable=self._status_var,
             font=ctk.CTkFont(size=12), text_color="#57606a",
         ).grid(row=3, column=0, pady=(8, 0))
+
+    # ── Rules helpers ─────────────────────────────────────────────────────────
+
+    def _clear_rules_placeholder(self, _event) -> None:
+        content = self._rules_box.get("1.0", "end-1c")
+        if content.startswith("Enter rules and conditions"):
+            self._rules_box.delete("1.0", "end")
+
+    def _get_rules(self) -> str:
+        """Return the current rules text, or empty string if still placeholder."""
+        content = self._rules_box.get("1.0", "end-1c").strip()
+        if content.startswith("Enter rules and conditions"):
+            return ""
+        return content
+
+    def _set_rules(self, text: str) -> None:
+        """Populate the rules box with text."""
+        self._rules_box.delete("1.0", "end")
+        if text:
+            self._rules_box.insert("1.0", text)
+
+    # ── Generate Rules dialog ─────────────────────────────────────────────────
+
+    def _open_generate_rules_dialog(self) -> None:
+        """Open a top-level dialog that lets the user describe the project to
+        the LLM and receive a draft BOB.md in return."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Generate Project Rules")
+        dialog.geometry("700x520")
+        dialog.resizable(True, True)
+        dialog.grab_set()
+        dialog.grid_rowconfigure(2, weight=1)
+        dialog.grid_columnconfigure(0, weight=1)
+
+        # ── Header ────────────────────────────────────────────────────────────
+        ctk.CTkLabel(
+            dialog,
+            text="Generate Project Rules (BOB.md)",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#1f2328",
+            anchor="w",
+        ).grid(row=0, column=0, padx=20, pady=(20, 4), sticky="w")
+
+        ctk.CTkLabel(
+            dialog,
+            text=(
+                "Describe your project — its language, framework, security requirements, "
+                "team conventions, or any specific rules you want enforced. "
+                "The LLM will draft a BOB.md rules file you can review and edit before accepting."
+            ),
+            font=ctk.CTkFont(size=12),
+            text_color="#57606a",
+            wraplength=660,
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=0, padx=20, pady=(0, 12), sticky="w")
+
+        # ── Input ─────────────────────────────────────────────────────────────
+        input_frame = ctk.CTkFrame(dialog, corner_radius=8, border_width=1, border_color="#e5e7eb")
+        input_frame.grid(row=2, column=0, padx=20, pady=(0, 8), sticky="nsew")
+        input_frame.grid_rowconfigure(1, weight=1)
+        input_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            input_frame, text="Project description for rules generation:",
+            font=ctk.CTkFont(size=12), text_color="#57606a", anchor="w",
+        ).grid(row=0, column=0, padx=12, pady=(10, 4), sticky="w")
+
+        # Pre-fill from the existing application brief if available
+        prefill = self._description_box.get("1.0", "end-1c").strip()
+        if prefill.startswith("Describe the application"):
+            prefill = ""
+
+        desc_box = ctk.CTkTextbox(input_frame, wrap="word", font=ctk.CTkFont(size=12))
+        desc_box.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="nsew")
+        if prefill:
+            desc_box.insert("1.0", prefill)
+
+        # ── Preview area (populated after generation) ─────────────────────────
+        preview_frame = ctk.CTkFrame(dialog, corner_radius=8, border_width=1, border_color="#e5e7eb")
+        preview_frame.grid(row=3, column=0, padx=20, pady=(0, 8), sticky="nsew")
+        preview_frame.grid_rowconfigure(1, weight=1)
+        preview_frame.grid_columnconfigure(0, weight=1)
+        dialog.grid_rowconfigure(3, weight=2)
+
+        preview_label = ctk.CTkLabel(
+            preview_frame, text="Generated rules will appear here for review:",
+            font=ctk.CTkFont(size=12), text_color="#57606a", anchor="w",
+        )
+        preview_label.grid(row=0, column=0, padx=12, pady=(10, 4), sticky="w")
+
+        preview_box = ctk.CTkTextbox(
+            preview_frame, wrap="word", font=ctk.CTkFont(size=12),
+            state="disabled",
+        )
+        preview_box.grid(row=1, column=0, padx=12, pady=(0, 12), sticky="nsew")
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.grid(row=4, column=0, padx=20, pady=(0, 16), sticky="ew")
+        btn_frame.grid_columnconfigure(2, weight=1)
+
+        status_lbl = ctk.CTkLabel(
+            btn_frame, text="", font=ctk.CTkFont(size=11), text_color="#57606a", anchor="w"
+        )
+        status_lbl.grid(row=0, column=0, sticky="w")
+
+        gen_btn = ctk.CTkButton(
+            btn_frame,
+            text="✨ Generate",
+            width=110, height=34,
+            fg_color="#7c5cd8",
+            hover_color="#6d28d9",
+            command=lambda: self._run_generate_rules(
+                desc_box.get("1.0", "end-1c").strip(),
+                preview_box,
+                gen_btn,
+                accept_btn,
+                status_lbl,
+            ),
+        )
+        gen_btn.grid(row=0, column=1, padx=(0, 8))
+
+        accept_btn = ctk.CTkButton(
+            btn_frame,
+            text="Accept →",
+            width=90, height=34,
+            fg_color="#3b82d4",
+            hover_color="#2563eb",
+            state="disabled",
+            command=lambda: self._accept_generated_rules(
+                preview_box.get("1.0", "end-1c"), dialog
+            ),
+        )
+        accept_btn.grid(row=0, column=2, sticky="w")
+
+        ctk.CTkButton(
+            btn_frame, text="Cancel", width=80, height=34,
+            fg_color="transparent", border_width=1, text_color="#1f2328",
+            command=dialog.destroy,
+        ).grid(row=0, column=3, padx=(8, 0))
+
+    def _run_generate_rules(
+        self,
+        description: str,
+        preview_box: ctk.CTkTextbox,
+        gen_btn: ctk.CTkButton,
+        accept_btn: ctk.CTkButton,
+        status_lbl: ctk.CTkLabel,
+    ) -> None:
+        if not description:
+            messagebox.showwarning(
+                "Missing Description",
+                "Please enter a project description to generate rules from.",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        gen_btn.configure(state="disabled", text="⏳ Generating…")
+        status_lbl.configure(text="Calling LLM…")
+
+        # Apply the provider/model selected on the form before constructing AIClient
+        os.environ["MAB_LLM_PROVIDER"] = self._provider_var.get()
+        os.environ["MAB_LLM_MODEL"] = self._model_var.get().strip()
+
+        def _run() -> None:
+            try:
+                from core.ai_client import AIClient
+                client = AIClient()
+                rules_md = client.generate_project_rules(description)
+                self.after(0, lambda: _on_done(rules_md))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Rules generation failed: %s", exc)
+                self.after(0, lambda: _on_error())
+
+        def _on_done(rules_md: str) -> None:
+            gen_btn.configure(state="normal", text="✨ Generate")
+            status_lbl.configure(text="Review the generated rules below.")
+            preview_box.configure(state="normal")
+            preview_box.delete("1.0", "end")
+            preview_box.insert("1.0", rules_md)
+            preview_box.configure(state="normal")  # keep editable for user tweaks
+            accept_btn.configure(state="normal")
+
+        def _on_error() -> None:
+            gen_btn.configure(state="normal", text="✨ Generate")
+            status_lbl.configure(text="Generation failed — check the log for details.")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _accept_generated_rules(self, rules_md: str, dialog: ctk.CTkToplevel) -> None:
+        """Copy the generated rules into the main rules box and close the dialog."""
+        self._set_rules(rules_md.strip())
+        dialog.destroy()
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -204,9 +460,9 @@ class PromptPanel(ctk.CTkFrame):
                     text="No models found — run: ollama pull <model>"
                 ))
         except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            self.after(0, lambda m=msg: self._model_status.configure(
-                text=f"Cannot reach Ollama: {m}"
+            logger.warning("Cannot reach Ollama: %s", exc)
+            self.after(0, lambda: self._model_status.configure(
+                text="Cannot reach Ollama — check MAB_OLLAMA_BASE_URL"
             ))
 
     def _set_ollama_models(self, models: list[str]) -> None:
@@ -225,6 +481,33 @@ class PromptPanel(ctk.CTkFrame):
         if path:
             self._output_dir_entry.delete(0, "end")
             self._output_dir_entry.insert(0, path)
+
+    # ── Mode switching (new project vs existing project) ──────────────────────
+
+    def reset_to_new(self) -> None:
+        """Switch the panel back to new-project mode (called by app.py on New Project)."""
+        self._project_root = None
+        self._set_new_mode()
+
+    def _set_new_mode(self) -> None:
+        """Show the Generate Architecture button."""
+        self._generate_btn.configure(
+            text="✨  Generate Agent Architecture",
+            fg_color="#3b82d4",
+            hover_color="#2563eb",
+            command=self._on_generate,
+            state="normal",
+        )
+
+    def _set_existing_mode(self) -> None:
+        """Replace the Generate button with Apply Changes for an existing project."""
+        self._generate_btn.configure(
+            text="💾  Apply Changes",
+            fg_color="#22c55e",
+            hover_color="#16a34a",
+            command=self._on_apply_changes,
+            state="normal",
+        )
 
     def _on_generate(self) -> None:
         project_name = self._project_name_entry.get().strip()
@@ -260,13 +543,53 @@ class PromptPanel(ctk.CTkFrame):
             self.after(0, lambda: self._show_review(result, project_name, output_dir))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Scaffold generation failed: %s", exc)
-            msg = str(exc)
-            self.after(0, lambda m=msg: self._on_error(m))
+            self.after(0, self._on_error)
 
-    def _on_error(self, message: str) -> None:
-        self._generate_btn.configure(state="normal", text="✨  Generate Agent Architecture")
-        self._status_var.set(f"Error: {message}")
-        messagebox.showerror("Generation Error", message)
+    def _on_error(self) -> None:
+        self._generate_btn.configure(state="normal", text="✨  Generate Agent Architecture",
+                                     fg_color="#3b82d4", hover_color="#2563eb")
+        self._status_var.set("Generation failed — check the application log for details.")
+        messagebox.showerror(
+            "Generation Error",
+            "Architecture generation failed.\nSee the application log for details.",
+        )
+
+    def _on_apply_changes(self) -> None:
+        """
+        Existing-project mode: persist any changes made on the Prompt page
+        (project name, description, LLM settings, rules) back to
+        mab_project.json and rewrite BOB.md.  No LLM call is made.
+        """
+        if not self._project_root:
+            return
+
+        rules = self._get_rules()
+        description = self._description_box.get("1.0", "end-1c").strip()
+        project_name = self._project_name_entry.get().strip()
+
+        # Write BOB.md if rules are present
+        if rules:
+            _write_bob_md(self._project_root, rules)
+
+        # Update mab_project.json — merge over the existing state so we don't
+        # lose fields we don't own (e.g. agents list)
+        from core.project_state import load_state, save_state
+        state = load_state(self._project_root)
+        state.update({
+            "project_name":  project_name,
+            "description":   description,
+            "llm_provider":  self._provider_var.get(),
+            "llm_model":     self._model_var.get().strip(),
+            "project_rules": rules,
+        })
+        save_state(self._project_root, state)
+
+        self._status_var.set("Changes saved.")
+        messagebox.showinfo(
+            "Changes Applied",
+            "Project settings and rules have been saved.\n"
+            + (f"BOB.md written to {self._project_root / _BOB_MD_FILENAME}" if rules else ""),
+        )
 
     def _show_review(
         self, result: dict, project_name: str, output_dir: str
@@ -392,8 +715,17 @@ class PromptPanel(ctk.CTkFrame):
                 progress_cb=lambda m: messages.append(m),
             )
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Scaffold Error", str(exc))
+            logger.exception("Project scaffold failed: %s", exc)
+            messagebox.showerror(
+                "Scaffold Error",
+                "Project creation failed.\nSee the application log for details.",
+            )
             return
+
+        # ── Write BOB.md to the project root ──────────────────────────────────
+        rules = self._get_rules()
+        if rules:
+            _write_bob_md(project_root, rules)
 
         # ── Persist all prompt-page inputs alongside the project ──────────────
         from core.project_state import save_state
@@ -405,6 +737,7 @@ class PromptPanel(ctk.CTkFrame):
             "llm_provider":    self._provider_var.get(),
             "llm_model":       self._model_var.get().strip(),
             "agents":          self._proposed_agents,
+            "project_rules":   rules,
         })
 
         review_frame.destroy()
@@ -417,10 +750,16 @@ class PromptPanel(ctk.CTkFrame):
         Restore the prompt-page fields from a project's mab_project.json.
         Called by app.py when the user opens an existing project.
         Shows the prompt tab pre-filled with the original inputs.
+        Also loads BOB.md from the project root if it exists.
         """
+        self._project_root = project_root
+        self._set_existing_mode()
+
         from core.project_state import load_state
         state = load_state(project_root)
         if not state:
+            # Still try to load BOB.md even if no state file
+            _load_bob_md_into(project_root, self._set_rules)
             return
 
         # Project name
@@ -447,6 +786,15 @@ class PromptPanel(ctk.CTkFrame):
         if description:
             self._description_box.delete("1.0", "end")
             self._description_box.insert("1.0", description)
+
+        # Project rules — prefer BOB.md on disk over cached state value
+        bob_md_text = _read_bob_md(project_root)
+        if bob_md_text:
+            self._set_rules(bob_md_text)
+        else:
+            rules = state.get("project_rules", "")
+            if rules:
+                self._set_rules(rules)
 
         # Restore proposed agents and show summary banner (no LLM call needed)
         agents = state.get("agents", [])
@@ -523,3 +871,34 @@ class PromptPanel(ctk.CTkFrame):
             justify="left",
             anchor="w",
         ).grid(row=2, column=0, padx=12, pady=(0, 10), sticky="w")
+
+
+# ── BOB.md file helpers ───────────────────────────────────────────────────────
+
+def _write_bob_md(project_root: Path, content: str) -> None:
+    """Write the rules content to BOB.md in the project root."""
+    target = project_root / _BOB_MD_FILENAME
+    try:
+        target.write_text(content, encoding="utf-8")
+        logger.info("BOB.md written to %s", target)
+    except OSError as exc:
+        logger.warning("Could not write BOB.md: %s", exc)
+
+
+def _read_bob_md(project_root: Path) -> str:
+    """Read BOB.md from the project root. Returns empty string if absent."""
+    target = project_root / _BOB_MD_FILENAME
+    if not target.exists():
+        return ""
+    try:
+        return target.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.warning("Could not read BOB.md: %s", exc)
+        return ""
+
+
+def _load_bob_md_into(project_root: Path, set_fn: Callable[[str], None]) -> None:
+    """Read BOB.md and call set_fn if content is found."""
+    text = _read_bob_md(project_root)
+    if text:
+        set_fn(text)
